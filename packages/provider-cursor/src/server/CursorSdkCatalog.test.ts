@@ -5,6 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -59,6 +60,7 @@ describe("CursorSdkCatalog", () => {
     { route: "me", status: 503, body: "Unavailable", expected: "error" },
     { route: "models", status: 200, body: { items: [{ id: "missing-name" }] }, expected: "error" },
     { route: "me", status: 200, body: "invalid JSON", expected: "error" },
+    { route: "GetTeams", status: 503, body: "Unavailable", expected: "no-teams" },
   ])(
     "reads $route HTTP $status as $expected without loading the SDK",
     ({ route, status, body, expected }) =>
@@ -81,16 +83,28 @@ describe("CursorSdkCatalog", () => {
           },
         ];
         const client = HttpClient.make((request) => {
-          expect(request.headers.authorization).toBe("Bearer test-key");
-          expect(request.headers["x-cursor-team-id"]).toBe("42");
-          expect(request.method).toBe("GET");
           requests.push(request.url);
-          const matches = request.url === `https://api.cursor.com/v1/${route}`;
+          const dashboard = request.url.startsWith("https://api2.cursor.sh/");
+          if (dashboard) {
+            expect(request.method).toBe("POST");
+            expect(request.headers.authorization).toBe(
+              request.url.endsWith("/GetTeams") ? "Bearer session-token" : "Bearer test-key",
+            );
+          } else {
+            expect(request.headers.authorization).toBe("Bearer test-key");
+            expect(request.headers["x-cursor-team-id"]).toBe("42");
+            expect(request.method).toBe("GET");
+          }
+          const matches = request.url.endsWith(`/${route}`);
           const responseBody = matches
             ? body
-            : request.url.endsWith("/me")
-              ? user
-              : { items: models };
+            : request.url.endsWith("/exchange_user_api_key")
+              ? { accessToken: "session-token" }
+              : request.url.endsWith("/GetTeams")
+                ? { teams: [{ id: 42, name: "Secondary team" }] }
+                : request.url.endsWith("/me")
+                  ? user
+                  : { items: models };
           const response =
             typeof responseBody === "string"
               ? new Response(responseBody, { status: matches ? status : 200 })
@@ -106,13 +120,14 @@ describe("CursorSdkCatalog", () => {
         );
         expect(sdkLoad).not.toHaveBeenCalled();
         const result = yield* catalog.read("test-key", 42).pipe(Effect.exit);
-        expect(requests).toContain(`https://api.cursor.com/v1/${route}`);
-        if (expected === "ready" || expected === "no-user") {
+        expect(requests.some((url) => url.endsWith(`/${route}`))).toBe(true);
+        if (expected === "ready" || expected === "no-user" || expected === "no-teams") {
           expect(Exit.isSuccess(result)).toBe(true);
           if (Exit.isSuccess(result))
             expect(result.value).toEqual({
               user: expected === "no-user" ? undefined : user,
               models,
+              teams: expected === "no-teams" ? undefined : [{ id: 42, name: "Secondary team" }],
             });
         } else {
           expect(Exit.isFailure(result)).toBe(true);
@@ -135,6 +150,7 @@ describe("CursorSdkCatalog", () => {
       let userCalls = 0;
       let modelCalls = 0;
       const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readTeams: () => Effect.undefined,
         readUser: () =>
           Effect.gen(function* () {
             userCalls += 1;
@@ -160,10 +176,24 @@ describe("CursorSdkCatalog", () => {
     }),
   );
 
+  it.effect("does not wait on a slow team listing", () =>
+    Effect.gen(function* () {
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readUser: () => Effect.succeed(user),
+        readModels: () => Effect.succeed([model]),
+        readTeams: () => Effect.never,
+      });
+      const read = yield* catalog.read("test-key").pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Fiber.join(read)).toEqual({ user, models: [model], teams: undefined });
+    }),
+  );
+
   it.effect("does not cache failed or empty model discovery, nor across teams", () =>
     Effect.gen(function* () {
       let modelCalls = 0;
       const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readTeams: () => Effect.undefined,
         readUser: () => Effect.succeed(user),
         readModels: () =>
           Effect.suspend(() => {

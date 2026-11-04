@@ -11,6 +11,8 @@ export interface ProviderEnvironmentField {
   readonly description?: string;
   readonly placeholder?: string;
   readonly sensitive?: boolean;
+  /** Offers the live provider's `auth.workspaces` as values for this field. */
+  readonly suggestsWorkspaces?: boolean;
 }
 
 export interface ProviderIcon {
