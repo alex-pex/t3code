@@ -197,21 +197,58 @@ describe("checkCursorProviderStatus", () => {
 
   it.effect.each([
     {
-      name: "publishes the team id of a browser sign-in",
+      name: "labels a browser sign-in with its team and lists the account's teams",
       teamId: undefined,
-      team: { id: 42, name: "Secondary team" },
-      expected: { status: "ready", auth: { workspaceId: "42" } },
+      teams: [
+        { id: 42, name: "Secondary team" },
+        { id: 7, name: undefined },
+      ],
+      expected: {
+        status: "ready",
+        auth: {
+          label: "Cursor account (Secondary team)",
+          workspaceId: "42",
+          workspaces: [{ id: "42", name: "Secondary team" }, { id: "7" }],
+        },
+      },
     },
     {
-      name: "warns about an invalid CURSOR_TEAM_ID",
-      teamId: "abc",
-      team: undefined,
+      name: "names a CURSOR_TEAM_ID team from the account's teams",
+      teamId: "7",
+      team: { id: 7, name: undefined },
+      teams: [{ id: 7, name: "Primary team" }],
+      expected: {
+        status: "ready",
+        auth: { label: "Cursor account (Primary team)", workspaceId: "7" },
+      },
+    },
+    {
+      name: "flags a CURSOR_TEAM_ID outside the account's teams",
+      teamId: "9",
+      teams: [{ id: 42, name: "Secondary team" }],
       expected: {
         status: "warning",
+        auth: { invalidEnvironmentFields: ["CURSOR_TEAM_ID"] },
+        message: 'CURSOR_TEAM_ID "9" is not one of this Cursor account\'s teams.',
+      },
+    },
+    {
+      name: "flags a malformed CURSOR_TEAM_ID",
+      teamId: "abc",
+      teams: undefined,
+      expected: {
+        status: "warning",
+        auth: { invalidEnvironmentFields: ["CURSOR_TEAM_ID"] },
         message: 'CURSOR_TEAM_ID "abc" is not a Cursor team id. Runs fail until it is fixed.',
       },
     },
-  ])("$name", ({ teamId, team, expected }) =>
+    {
+      name: "trusts CURSOR_TEAM_ID when the teams are unknown",
+      teamId: "9",
+      teams: undefined,
+      expected: { status: "ready" },
+    },
+  ])("$name", ({ teamId, team = { id: 42, name: "Secondary team" }, teams, expected }) =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(
         baseCursorSettings,
@@ -223,12 +260,16 @@ describe("checkCursorProviderStatus", () => {
             Effect.succeed({
               user: { apiKeyName: "T3 Code", createdAt: "2026-01-01T00:00:00.000Z" },
               models: [sdkParameterizedModel],
+              teams,
             }),
           ),
         ),
       );
 
       expect(provider).toMatchObject(expected);
+      if (expected.status === "ready") {
+        expect(provider.auth.invalidEnvironmentFields).toBeUndefined();
+      }
     }),
   );
 
@@ -251,7 +292,7 @@ describe("checkCursorProviderStatus", () => {
 
       expect(provider).toMatchObject({
         status: "error",
-        auth: { status: "unauthenticated" },
+        auth: { status: "unauthenticated", invalidEnvironmentFields: ["CURSOR_API_KEY"] },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
       });
     }),
@@ -372,6 +413,7 @@ describe("checkCursorProviderStatus", () => {
   ])("$name", ({ meFailure, expected }) =>
     Effect.gen(function* () {
       const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
+        readTeams: () => Effect.undefined,
         readUser: () =>
           Effect.fail(
             new CursorSdkCatalog.CursorSdkCatalogError({

@@ -22,6 +22,7 @@ export const cursorClient = defineProviderClient({
       label: "Team ID",
       description: "Optional. Leave empty for the account's default team.",
       sensitive: false,
+      suggestsWorkspaces: true,
     },
   ],
   icon: {

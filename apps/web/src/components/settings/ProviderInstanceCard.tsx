@@ -43,6 +43,13 @@ import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
+import {
+  Autocomplete,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+  AutocompletePopup,
+} from "../ui/autocomplete";
 import { DraftInput } from "../ui/draft-input";
 import { SecretSourceInput, type SecretSource } from "./SecretSourceInput";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -270,9 +277,65 @@ export function nextProviderEnvironmentWithFieldSecret(
     : [...others, { name: field.name, value: secret, sensitive: true }];
 }
 
+type ProviderWorkspace = NonNullable<ServerProvider["auth"]["workspaces"]>[number];
+
+/** A plain value with the account's workspaces offered on click. */
+function WorkspaceIdInput(props: {
+  readonly id: string;
+  readonly value: string;
+  readonly workspaces: ReadonlyArray<ProviderWorkspace>;
+  readonly invalid: boolean;
+  readonly onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (next: string) => {
+    setDraft(null);
+    if (next.trim() !== props.value) props.onCommit(next);
+  };
+  return (
+    <Autocomplete
+      items={props.workspaces}
+      itemToStringValue={(workspace) => workspace.id}
+      mode="none"
+      openOnInputClick
+      value={draft ?? props.value}
+      onValueChange={(next, details) =>
+        details.reason === "item-press" ? commit(next) : setDraft(next)
+      }
+    >
+      <AutocompleteInput
+        id={props.id}
+        size="sm"
+        className="min-w-0 flex-1"
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={props.invalid || undefined}
+        onBlur={() => {
+          if (draft !== null) commit(draft);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      <AutocompletePopup>
+        <AutocompleteList>
+          {props.workspaces.map((workspace) => (
+            <AutocompleteItem key={workspace.id} value={workspace}>
+              <span className="min-w-0 flex-1 truncate">{workspace.name ?? workspace.id}</span>
+              <span className="text-xs text-muted-foreground">{workspace.id}</span>
+            </AutocompleteItem>
+          ))}
+        </AutocompleteList>
+      </AutocompletePopup>
+    </Autocomplete>
+  );
+}
+
 function ProviderEnvironmentFieldRow(props: {
   readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly invalid: boolean;
+  readonly workspaces: ReadonlyArray<ProviderWorkspace> | undefined;
   readonly idPrefix: string;
   readonly onCommit: (field: ProviderEnvironmentField, value: string) => void;
   readonly onSecretChange: (
@@ -293,7 +356,15 @@ function ProviderEnvironmentFieldRow(props: {
       managed={props.managedReason}
       control={
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-          {props.field.sensitive === false ? (
+          {props.field.sensitive === false && props.workspaces?.length ? (
+            <WorkspaceIdInput
+              id={inputId}
+              value={typeof value === "string" ? value : ""}
+              workspaces={props.workspaces}
+              invalid={props.invalid}
+              onCommit={(next) => props.onCommit(props.field, next)}
+            />
+          ) : props.field.sensitive === false ? (
             <DraftInput
               id={inputId}
               size="sm"
@@ -303,6 +374,7 @@ function ProviderEnvironmentFieldRow(props: {
               onCommit={(next) => props.onCommit(props.field, next)}
               placeholder={props.field.placeholder}
               spellCheck={false}
+              aria-invalid={props.invalid || undefined}
             />
           ) : (
             <SecretSourceInput
@@ -315,6 +387,7 @@ function ProviderEnvironmentFieldRow(props: {
               configured={props.variable?.valueRedacted === true}
               spellCheck={false}
               aria-label={props.field.label}
+              aria-invalid={props.invalid || undefined}
               sources={props.secretSources}
               onSecretChange={(secret) => props.onSecretChange(props.field, secret)}
             />
@@ -1295,6 +1368,10 @@ export function ProviderInstanceCard({
                   key={field.name}
                   field={field}
                   variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                  invalid={
+                    liveProvider?.auth.invalidEnvironmentFields?.includes(field.name) === true
+                  }
+                  workspaces={field.suggestsWorkspaces ? liveProvider?.auth.workspaces : undefined}
                   idPrefix={`provider-instance-${instanceId}`}
                   onCommit={updateEnvironmentField}
                   onSecretChange={updateEnvironmentFieldSecret}

@@ -13,9 +13,16 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+export interface CursorTeamOption {
+  readonly id: number;
+  readonly name: string | undefined;
+}
+
 export interface CursorSdkCatalogSnapshot {
   readonly user: SDKUser | undefined;
   readonly models: ReadonlyArray<SDKModel>;
+  /** Absent when Cursor did not list the account's teams. */
+  readonly teams?: ReadonlyArray<CursorTeamOption> | undefined;
 }
 
 export class CursorSdkCatalogError extends Schema.TaggedError<CursorSdkCatalogError>()(
@@ -61,6 +68,9 @@ export interface CursorSdkCatalogProbes {
     apiKey: string,
     teamId?: number,
   ) => Effect.Effect<ReadonlyArray<SDKModel>, CursorSdkCatalogError>;
+  readonly readTeams: (
+    apiKey: string,
+  ) => Effect.Effect<ReadonlyArray<CursorTeamOption> | undefined>;
 }
 
 const CatalogUser = Schema.Struct({
@@ -101,6 +111,12 @@ const CatalogModel = Schema.Struct({
   ),
 });
 const CatalogModels = Schema.Struct({ items: Schema.Array(CatalogModel).pipe(Schema.mutable) });
+const ExchangedKey = Schema.Struct({ accessToken: Schema.String });
+const CatalogTeams = Schema.Struct({
+  teams: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ id: Schema.Int, name: Schema.optionalKey(Schema.String) })),
+  ),
+});
 const ApiError = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   message: Schema.optionalKey(Schema.String),
@@ -148,6 +164,16 @@ const makeLiveProbes = Effect.gen(function* () {
     }
     return response;
   });
+  const dashboard = (token: string, path: string) =>
+    client
+      .execute(
+        HttpClientRequest.post(`https://api2.cursor.sh${path}`).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.setHeaders({ "connect-protocol-version": "1" }),
+          HttpClientRequest.bodyJsonUnsafe({}),
+        ),
+      )
+      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
   return {
     readUser: (apiKey, teamId) =>
       request(apiKey, "/v1/me", teamId).pipe(
@@ -168,8 +194,24 @@ const makeLiveProbes = Effect.gen(function* () {
             : new CursorSdkCatalogError({ authenticationFailure: false, cause }),
         ),
       ),
+    // Undocumented routes the SDK itself uses for dashboard calls. The list only feeds settings
+    // suggestions, so any failure just leaves it out.
+    readTeams: (apiKey) =>
+      dashboard(apiKey, "/auth/exchange_user_api_key").pipe(
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(ExchangedKey)),
+        Effect.flatMap(({ accessToken }) =>
+          dashboard(accessToken, "/aiserver.v1.DashboardService/GetTeams"),
+        ),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(CatalogTeams)),
+        Effect.map(({ teams = [] }) =>
+          teams.map((team) => ({ id: team.id, name: team.name?.trim() || undefined })),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      ),
   } satisfies CursorSdkCatalogProbes;
 });
+
+const TEAMS_TIMEOUT = Duration.seconds(5);
 
 class ModelCacheKey extends Data.Class<{
   readonly apiKey: string;
@@ -199,6 +241,10 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
             (error: CursorSdkCatalogError) => Effect.fail(error),
           ),
           models: Cache.get(modelCache, new ModelCacheKey({ apiKey, teamId })),
+          // Suggestions only: a slow listing must not time out the status or reject a sign-in.
+          teams: probes
+            .readTeams(apiKey)
+            .pipe(Effect.timeoutOption(TEAMS_TIMEOUT), Effect.map(Option.getOrUndefined)),
         },
         { concurrency: "unbounded" },
       );

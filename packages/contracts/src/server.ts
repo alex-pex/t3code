@@ -70,6 +70,17 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** Workspaces the signed-in account can choose, offered as suggestions in settings. */
+  workspaces: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        name: Schema.optional(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
+  /** Provider environment fields whose value the provider rejected. */
+  invalidEnvironmentFields: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 

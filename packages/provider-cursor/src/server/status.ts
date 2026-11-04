@@ -186,20 +186,31 @@ export function buildCursorDiscoveredModelsFromSdk(
 function cursorSdkAuth(
   user: SDKUser | undefined,
   { type, team }: { readonly type: "api-key" | "browser"; readonly team?: CursorTeam | undefined },
+  teams: CursorSdkCatalog.CursorSdkCatalogSnapshot["teams"],
+  teamRejected: boolean,
 ): ServerProviderAuth {
   const email = user?.userEmail?.trim();
   const apiKeyName = user?.apiKeyName.trim();
+  const teamName = team?.name ?? teams?.find(({ id }) => id === team?.id)?.name;
   return {
     status: "authenticated",
     type,
     label:
       type === "browser"
-        ? "Cursor account"
+        ? teamName
+          ? `Cursor account (${teamName})`
+          : "Cursor account"
         : apiKeyName
           ? `Cursor API key (${apiKeyName})`
           : "Cursor API key",
     ...(email ? { email } : {}),
     ...(team ? { workspaceId: String(team.id) } : {}),
+    ...(teams?.length
+      ? {
+          workspaces: teams.map(({ id, name }) => ({ id: String(id), ...(name ? { name } : {}) })),
+        }
+      : {}),
+    ...(teamRejected ? { invalidEnvironmentFields: ["CURSOR_TEAM_ID"] } : {}),
   };
 }
 
@@ -324,7 +335,12 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         installed: true,
         version: null,
         status: "error",
-        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+        auth: {
+          status: failure.authenticationFailure ? "unauthenticated" : "unknown",
+          ...(failure.authenticationFailure && authentication.type === "api-key"
+            ? { invalidEnvironmentFields: ["CURSOR_API_KEY"] }
+            : {}),
+        },
         message,
       },
     });
@@ -348,18 +364,25 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   const snapshot = catalogResult.success.value;
   const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
-  const teamId = environment?.CURSOR_TEAM_ID?.trim();
-  const teamInvalid = isInvalidCursorTeamId(teamId);
+  const configuredTeamId = environment?.CURSOR_TEAM_ID?.trim();
+  const teamMalformed = isInvalidCursorTeamId(configuredTeamId);
+  const teamRejected =
+    !!configuredTeamId &&
+    (teamMalformed ||
+      (snapshot.teams !== undefined &&
+        !snapshot.teams.some((team) => String(team.id) === configuredTeamId)));
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
     parsed: {
       version: null,
-      status: teamInvalid ? "warning" : "ready",
-      auth: cursorSdkAuth(snapshot.user, authentication),
-      ...(teamInvalid
+      status: teamRejected ? "warning" : "ready",
+      auth: cursorSdkAuth(snapshot.user, authentication, snapshot.teams, teamRejected),
+      ...(teamRejected
         ? {
-            message: `CURSOR_TEAM_ID "${teamId}" is not a Cursor team id. Runs fail until it is fixed.`,
+            message: teamMalformed
+              ? `CURSOR_TEAM_ID "${configuredTeamId}" is not a Cursor team id. Runs fail until it is fixed.`
+              : `CURSOR_TEAM_ID "${configuredTeamId}" is not one of this Cursor account's teams.`,
           }
         : {}),
     },
