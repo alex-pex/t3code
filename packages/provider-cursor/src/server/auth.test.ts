@@ -292,33 +292,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
 
   it.effect.each<{
     name: string;
+    cliEmail: string;
     apiKey?: string;
     teamId?: string;
     expected?: CursorTeam | "rejected";
   }>([
-    { name: "the default team for browser sign-in" },
     {
-      name: "CURSOR_TEAM_ID for browser sign-in",
+      name: "the CLI team when the CLI uses the same account",
+      cliEmail: "Cursor@Example.com",
+      expected: { id: 7, name: "CLI team" },
+    },
+    { name: "no team when the CLI uses another account", cliEmail: "other@example.com" },
+    {
+      name: "CURSOR_TEAM_ID over the CLI team",
       teamId: " 42 ",
+      cliEmail: "cursor@example.com",
       expected: { id: 42, name: undefined },
     },
     ...["abc", "0", "-1", "1.5", "1e3", "2147483648", "9007199254740993"].map((teamId) => ({
       name: `no team for an invalid CURSOR_TEAM_ID "${teamId}"`,
       teamId,
+      cliEmail: "cursor@example.com",
       expected: "rejected" as const,
     })),
-    { name: "the default team for an explicit API key", apiKey: "explicit-key" },
+    {
+      name: "no CLI team for an explicit API key",
+      apiKey: "explicit-key",
+      cliEmail: "cursor@example.com",
+    },
     {
       name: "CURSOR_TEAM_ID for an explicit API key",
       apiKey: "explicit-key",
       teamId: "42",
+      cliEmail: "cursor@example.com",
       expected: { id: 42, name: undefined },
     },
-  ])("uses $name", ({ apiKey, teamId, expected }) =>
+  ])("uses $name", ({ apiKey, teamId, cliEmail, expected }) =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         ...(apiKey ? { apiKey } : {}),
         ...(teamId ? { teamId } : {}),
+        readCliLogin: Effect.succeed({ email: cliEmail, team: { id: 7, name: "CLI team" } }),
       });
       yield* Effect.promise(() => harness.store.save(harness.credentials));
       const access = yield* Effect.exit(harness.auth.requireAccess);

@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import type { CursorCliLogin } from "./cliConfig.ts";
 import { loadCursorSdk } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
@@ -55,12 +56,13 @@ export interface CursorAuthOptions {
   readonly displayName: string;
   readonly enabled: boolean;
   readonly apiKey?: string;
-  /** Raw `CURSOR_TEAM_ID`; a valid id scopes both connection types to that team. */
+  /** Raw `CURSOR_TEAM_ID`; a valid id scopes both connection types to that team, over the CLI team. */
   readonly teamId?: string;
   readonly store: SdkCredentialStore;
   readonly credentialBinding?: NonNullable<ProviderAuthController["credentialBinding"]>;
   readonly onChanged: (signedIn: boolean) => Effect.Effect<void, ProviderSetupError>;
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
+  readonly readCliLogin?: Effect.Effect<CursorCliLogin | undefined>;
 }
 
 /** Cursor team ids are positive int32 values; a blank setting means the default team. */
@@ -110,7 +112,14 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       (credentials.apiKeyExpiresAtMs !== undefined && credentials.apiKeyExpiresAtMs <= now)
     )
       return undefined;
-    return { apiKey: credentials.apiKey, team: undefined } satisfies CursorAccess;
+    // Another account's team would bill a team this login may not belong to.
+    const cli = options.readCliLogin ? yield* options.readCliLogin : undefined;
+    const sameAccount =
+      cli !== undefined && cli.email.toLowerCase() === credentials.email?.trim().toLowerCase();
+    return {
+      apiKey: credentials.apiKey,
+      team: sameAccount ? cli.team : undefined,
+    } satisfies CursorAccess;
   });
 
   const teamIdText = options.teamId?.trim();
