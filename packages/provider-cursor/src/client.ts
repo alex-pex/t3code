@@ -20,7 +20,7 @@ export const cursorClient = defineProviderClient({
     {
       name: "CURSOR_TEAM_ID",
       label: "Team ID",
-      description: "Optional. Leave empty for the account's default team.",
+      description: "Optional. Overrides the Cursor CLI's team for this provider.",
       sensitive: false,
       suggestsWorkspaces: true,
     },

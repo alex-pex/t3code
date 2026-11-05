@@ -34,6 +34,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { probeCursorSkills } from "./skills.ts";
 import { isInvalidCursorTeamId, makeCursorAuth } from "./auth.ts";
+import { readCursorCliLogin } from "./cliConfig.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
@@ -141,6 +142,10 @@ export const CursorDriver: ProviderDriver<
       ...(processEnv.CURSOR_TEAM_ID ? { teamId: processEnv.CURSOR_TEAM_ID } : {}),
       store: credentials.store,
       credentialBinding: credentials.binding,
+      readCliLogin: readCursorCliLogin(processEnv).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
       onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
         snapshot.refresh.pipe(
           Effect.flatMap((provider) =>

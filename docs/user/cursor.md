@@ -32,7 +32,9 @@ Choose **Sign in**, then open the sign-in page and complete it in your browser. 
 updates automatically when sign-in finishes. This works when connected to a remote environment too.
 On mobile, use **Settings > Providers** for an already configured Cursor instance.
 
-If your Cursor account belongs to several teams, runs use the account's default team.
+If your Cursor account belongs to several teams, T3 Code uses the team selected in the Cursor CLI
+(`agent team switch`) on the machine that runs T3 Code, when the CLI is signed in with the same
+email. The provider status shows that team. Otherwise, runs use the account's default team.
 
 To use another team, pick it in **Team ID** or enter its id. It applies to browser sign-in and to
 `CURSOR_API_KEY`. On web and desktop, the field lists the connected account's teams when Cursor
